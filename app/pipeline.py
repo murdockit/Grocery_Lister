@@ -22,28 +22,47 @@ async def run_pipeline(settings: Settings | None = None) -> list[SelectedDeal]:
     settings = settings or get_settings()
     init_db(settings.database_url)
     watchlist = load_watchlist(settings.watchlist_path)
+    run_id = _start_run(settings)
 
+    try:
+        candidates = await KrogerClient(settings).get_promo_deals(watchlist.search_terms)
+        selected = DealSelector(settings).select(candidates, watchlist)
+
+        with session_scope(settings.database_url) as session:
+            _record_prices(session, candidates)
+
+        await _publish(settings, selected)
+
+        with session_scope(settings.database_url) as session:
+            _record_published(session, selected, settings.output_modes)
+            run = session.get(Run, run_id)
+            if run is None:
+                raise RuntimeError(f"Run {run_id} disappeared before completion")
+            run.status = "success"
+            run.finished_at = utc_now()
+        return selected
+    except Exception as exc:
+        _mark_run_failed(settings, run_id, exc)
+        if settings.smtp_host and settings.notify_email:
+            await EmailOutput(settings).send_failure(str(exc))
+        raise
+
+
+def _start_run(settings: Settings) -> int:
     with session_scope(settings.database_url) as session:
         run = Run()
         session.add(run)
         session.flush()
-        try:
-            candidates = await KrogerClient(settings).get_promo_deals(watchlist.search_terms)
-            _record_prices(session, candidates)
-            selected = DealSelector(settings).select(candidates, watchlist)
-            await _publish(settings, selected)
-            _record_published(session, selected, settings.output_modes)
-            run.status = "success"
-            run.finished_at = utc_now()
-            return selected
-        except Exception as exc:
+        return run.id
+
+
+def _mark_run_failed(settings: Settings, run_id: int, exc: Exception) -> None:
+    with session_scope(settings.database_url) as session:
+        run = session.get(Run, run_id)
+        if run is not None:
             run.status = "failed"
             run.error = str(exc)
             run.finished_at = utc_now()
-            session.commit()
-            if settings.smtp_host and settings.notify_email:
-                await EmailOutput(settings).send_failure(str(exc))
-            raise
 
 
 def _record_prices(session: Session, candidates: list[CandidateDeal]) -> None:
