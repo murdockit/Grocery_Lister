@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from app.db import init_db, session_scope
-from app.habits import build_habit_summary, build_price_history
+from app.habits import HabitSummary, build_habit_summary, build_price_history, compute_likelihood
 from app.models import Decision, Item, PriceHistory
 
 
@@ -63,3 +63,13 @@ def test_build_price_history_returns_promo_prices_by_upc(tmp_path):
         history = build_price_history(session, ["upc-1", "missing-upc"])
 
     assert history == {"upc-1": [Decimal("7.99")]}
+
+
+def test_compute_likelihood_thresholds():
+    assert compute_likelihood(None) is None
+    assert compute_likelihood(HabitSummary(times_purchased=0, times_ignored=0)) is None
+    assert compute_likelihood(HabitSummary(times_purchased=2, times_ignored=5)) is None
+    assert compute_likelihood(HabitSummary(times_purchased=3, times_ignored=0)) == "likely"
+    assert compute_likelihood(HabitSummary(times_purchased=0, times_ignored=6)) == "unlikely"
+    # Purchase evidence wins if both thresholds are somehow crossed.
+    assert compute_likelihood(HabitSummary(times_purchased=3, times_ignored=6)) == "likely"

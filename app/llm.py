@@ -11,7 +11,7 @@ from pydantic import BaseModel, ValidationError
 from app.config import Settings
 from app.deals import CandidateDeal, SelectedDeal
 from app.distill import DistillationResult
-from app.habits import HabitSummary
+from app.habits import HabitSummary, compute_likelihood
 from app.pricing import fallback_select, is_historically_good_price, passes_discount_threshold
 from app.watchlist import Watchlist
 
@@ -20,7 +20,7 @@ class LlmDecision(BaseModel):
     upc: str
     matched_watchlist_item: str
     is_good_deal: bool
-    confidence: float | None = None
+    confidence: float | None = None  # 0-100: how confident this is a deal worth buying
     reason: str
 
 
@@ -49,11 +49,11 @@ class DealSelector:
         ]
 
         if not self.settings.gemini_api_key:
-            return fallback_select(candidates, watchlist, history)
+            return fallback_select(candidates, watchlist, history, habits)
         try:
             decisions = self._ask_gemini(candidates, watchlist, habits, history)
         except Exception:
-            return fallback_select(candidates, watchlist, history)
+            return fallback_select(candidates, watchlist, history, habits)
 
         by_upc = {candidate.upc: candidate for candidate in candidates}
         selected: list[SelectedDeal] = []
@@ -71,6 +71,8 @@ class DealSelector:
                     candidate=candidate,
                     matched_watchlist_item=decision.matched_watchlist_item,
                     reason=decision.reason,
+                    confidence=decision.confidence,
+                    likelihood=compute_likelihood(habits.get(candidate.upc)),
                 )
             )
         selected.sort(key=lambda deal: deal.candidate.discount_pct, reverse=True)
@@ -96,8 +98,10 @@ class DealSelector:
                 "to how often they're bought). Downweight items the user has repeatedly "
                 "ignored. Flag prices at or below the user's demonstrated buy price "
                 "(max_price_purchased_at) or historically good (historically_good_price) as "
-                "strong deals even if the discount_pct looks modest. Do not apply "
-                "max_list_size or min_discount_pct; code will apply those filters."
+                "strong deals even if the discount_pct looks modest. For each deal, set "
+                "confidence to an integer 0-100 reflecting how confident you are it's worth "
+                "buying. Do not apply max_list_size or min_discount_pct; code will apply "
+                "those filters."
             ),
         }
         response = client.models.generate_content(

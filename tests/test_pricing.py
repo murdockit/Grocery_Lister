@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from app.deals import CandidateDeal
+from app.habits import HabitSummary
 from app.pricing import fallback_select, is_historically_good_price, promo_percentile
 from app.watchlist import WatchItem, Watchlist
 
@@ -81,6 +82,24 @@ def test_fallback_select_accepts_historically_good_price_below_discount_threshol
 
     assert [deal.candidate.upc for deal in selected] == ["1"]
     assert "percentile" in selected[0].reason
+
+
+def test_fallback_select_attaches_likelihood_from_habits():
+    watchlist = Watchlist(items=[WatchItem(name="coffee")], min_discount_pct=0, max_list_size=10)
+    candidate = CandidateDeal(
+        upc="1",
+        description="Private Selection Coffee",
+        category="Beverages",
+        regular_price=Decimal("10.99"),
+        promo_price=Decimal("10.49"),
+        term="coffee",
+    )
+    habits = {"1": HabitSummary(times_purchased=3, times_ignored=0)}
+
+    selected = fallback_select([candidate], watchlist, habits=habits)
+
+    assert selected[0].likelihood == "likely"
+    assert selected[0].confidence is None
 
 
 def test_promo_percentile_uses_nearest_rank():
