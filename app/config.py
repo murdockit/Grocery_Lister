@@ -1,9 +1,10 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+VALID_RUN_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
 class Settings(BaseSettings):
@@ -33,8 +34,9 @@ class Settings(BaseSettings):
     email_from: str = ""
 
     tz: str = "America/New_York"
-    run_day: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"] = "wed"
-    run_hour: int = Field(default=7, ge=0, le=23)
+    run_day: str = "wed,fri"
+    run_hour: int = Field(default=0, ge=0, le=23)
+    run_minute: int = Field(default=30, ge=0, le=59)
 
     watchlist_path: Path = Path("/data/watchlist.yaml")
     http_timeout_seconds: float = 30.0
@@ -44,6 +46,17 @@ class Settings(BaseSettings):
     def normalize_output_mode(cls, value: str) -> str:
         modes = [mode.strip().lower() for mode in value.split(",") if mode.strip()]
         return ",".join(dict.fromkeys(modes))
+
+    @field_validator("run_day")
+    @classmethod
+    def normalize_run_day(cls, value: str) -> str:
+        days = [day.strip().lower() for day in value.split(",") if day.strip()]
+        if not days:
+            raise ValueError("RUN_DAY must include at least one day")
+        invalid = sorted(set(days) - set(VALID_RUN_DAYS))
+        if invalid:
+            raise ValueError(f"RUN_DAY has invalid day(s) {invalid}; expected {VALID_RUN_DAYS}")
+        return ",".join(dict.fromkeys(days))
 
     @property
     def output_modes(self) -> list[str]:

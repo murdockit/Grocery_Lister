@@ -6,6 +6,7 @@ from sqlalchemy import select
 from app.config import Settings
 from app.db import session_scope
 from app.models import AppState, Preference, Published
+from app.outputs.email import EmailOutput
 from app.pipeline import run_pipeline
 
 
@@ -135,3 +136,80 @@ async def test_pipeline_ingests_active_learned_preference_terms(monkeypatch, tmp
     await run_pipeline(settings)
 
     assert captured_terms["terms"] == ["coffee"]
+
+
+@pytest.mark.asyncio
+async def test_failure_email_only_sent_after_consecutive_threshold(monkeypatch, tmp_path):
+    watchlist_path = tmp_path / "watchlist.yaml"
+    watchlist_path.write_text("items: []\n", encoding="utf-8")
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'app.db'}",
+        watchlist_path=watchlist_path,
+        mock_kroger=True,
+        output_mode="",
+        smtp_host="smtp.example.com",
+        notify_email="you@example.com",
+    )
+
+    async def boom(settings, selected):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("app.pipeline._publish", boom)
+
+    sent: list[str] = []
+
+    async def fake_send_failure(self, error):
+        sent.append(error)
+
+    monkeypatch.setattr(EmailOutput, "send_failure", fake_send_failure)
+
+    with pytest.raises(RuntimeError):
+        await run_pipeline(settings)
+    assert sent == []  # first failure: no alert yet
+
+    with pytest.raises(RuntimeError):
+        await run_pipeline(settings)
+    assert len(sent) == 1  # second consecutive failure: alert fires
+
+    with pytest.raises(RuntimeError):
+        await run_pipeline(settings)
+    assert len(sent) == 2  # keeps alerting on every failure past the threshold
+
+
+@pytest.mark.asyncio
+async def test_failure_streak_resets_after_a_success(monkeypatch, tmp_path):
+    watchlist_path = tmp_path / "watchlist.yaml"
+    watchlist_path.write_text("items: []\n", encoding="utf-8")
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'app.db'}",
+        watchlist_path=watchlist_path,
+        mock_kroger=True,
+        output_mode="",
+        smtp_host="smtp.example.com",
+        notify_email="you@example.com",
+    )
+
+    sent: list[str] = []
+    should_fail = True
+
+    async def fake_send_failure(self, error):
+        sent.append(error)
+
+    async def maybe_boom(settings, selected):
+        if should_fail:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(EmailOutput, "send_failure", fake_send_failure)
+    monkeypatch.setattr("app.pipeline._publish", maybe_boom)
+
+    with pytest.raises(RuntimeError):
+        await run_pipeline(settings)
+    assert sent == []  # first failure: no alert
+
+    should_fail = False
+    await run_pipeline(settings)  # succeeds, resets the streak
+
+    should_fail = True
+    with pytest.raises(RuntimeError):
+        await run_pipeline(settings)
+    assert sent == []  # only one failure since the last success

@@ -64,7 +64,7 @@ def test_digest_html_renders_table_with_all_columns():
 
     body = _digest_html([deal])
 
-    for header in ("Item", "Regular", "Promo", "Savings %", "Confidence", "Likelihood"):
+    for header in ("Item", "Regular", "Promo", "Savings %", "Confidence", "Likelihood", "Why"):
         assert header in body
     assert "Chicken thighs" in body
     assert "$2.79" in body
@@ -72,6 +72,7 @@ def test_digest_html_renders_table_with_all_columns():
     assert "29%" in body
     assert "82" in body
     assert "Likely" in body
+    assert "Great local price." in body
 
 
 def test_digest_html_escapes_item_description():
@@ -92,6 +93,46 @@ def test_digest_html_escapes_item_description():
 
     assert "<script>" not in body
     assert "&lt;script&gt;" in body
+
+
+def _deal(upc: str, confidence, likelihood, discount_pct: int = 10) -> SelectedDeal:
+    regular = Decimal("10.00")
+    promo = regular * (Decimal(100 - discount_pct) / Decimal(100))
+    return SelectedDeal(
+        candidate=CandidateDeal(
+            upc=upc,
+            description=f"Item {upc}",
+            category="Misc",
+            regular_price=regular,
+            promo_price=promo,
+            term="item",
+        ),
+        matched_watchlist_item="item",
+        reason="reason",
+        confidence=confidence,
+        likelihood=likelihood,
+    )
+
+
+def test_digest_sorts_likely_and_high_confidence_first():
+    unlikely = _deal("unlikely", confidence=90, likelihood="unlikely", discount_pct=50)
+    blank_low_conf = _deal("blank-low", confidence=20, likelihood=None, discount_pct=40)
+    blank_high_conf = _deal("blank-high", confidence=95, likelihood=None, discount_pct=10)
+    likely_low_conf = _deal("likely-low", confidence=10, likelihood="likely", discount_pct=5)
+    likely_high_conf = _deal("likely-high", confidence=99, likelihood="likely", discount_pct=5)
+
+    deals = [unlikely, blank_low_conf, likely_low_conf, blank_high_conf, likely_high_conf]
+
+    html_body = _digest_html(deals)
+    text_body = _digest_body(deals)
+
+    expected_order = ["likely-high", "likely-low", "blank-high", "blank-low", "unlikely"]
+
+    def positions(body: str) -> list[str]:
+        return sorted(expected_order, key=lambda upc: body.index(f"Item {upc}"))
+
+    assert positions(html_body) == expected_order
+    assert positions(text_body) == expected_order
 
 
 def test_digest_html_handles_no_deals_and_missing_confidence():

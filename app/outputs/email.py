@@ -61,6 +61,21 @@ class EmailOutput(OutputAdapter):
             smtp.send_message(message)
 
 
+_LIKELIHOOD_RANK = {"likely": 0, None: 1, "unlikely": 2}
+
+
+def _digest_sort_key(deal: SelectedDeal) -> tuple[int, float, int]:
+    likelihood_rank = _LIKELIHOOD_RANK.get(deal.likelihood, 1)
+    confidence = deal.confidence if deal.confidence is not None else -1.0
+    return (likelihood_rank, -confidence, -deal.candidate.discount_pct)
+
+
+def _sort_for_digest(deals: list[SelectedDeal]) -> list[SelectedDeal]:
+    """Surface likely purchases and high-confidence deals first in the email
+    (this is presentation-only; it doesn't affect Todoist task order)."""
+    return sorted(deals, key=_digest_sort_key)
+
+
 def _total_savings(deals: list[SelectedDeal]) -> Decimal:
     return sum(
         (
@@ -76,7 +91,7 @@ def _digest_body(deals: list[SelectedDeal]) -> str:
     if not deals:
         return "No qualifying weekly deals found.\n"
     lines = ["Weekly Deals", ""]
-    for deal in deals:
+    for deal in _sort_for_digest(deals):
         lines.append(f"- {deal.task_content}")
         details = deal.reason
         if deal.confidence is not None:
@@ -96,8 +111,8 @@ _TABLE_STYLE = "border-collapse:collapse;font-family:sans-serif;font-size:14px;"
 _HEADER_CELL_STYLE = "text-align:{align};padding:6px 10px;border-bottom:2px solid #333;"
 _BODY_CELL_STYLE = "padding:6px 10px;border-bottom:1px solid #ddd;text-align:{align};"
 
-_COLUMNS = ("Item", "Regular", "Promo", "Savings %", "Confidence", "Likelihood")
-_ALIGNMENTS = ("left", "right", "right", "right", "right", "center")
+_COLUMNS = ("Item", "Regular", "Promo", "Savings %", "Confidence", "Likelihood", "Why")
+_ALIGNMENTS = ("left", "right", "right", "right", "right", "center", "left")
 
 
 def _digest_html(deals: list[SelectedDeal]) -> str:
@@ -108,7 +123,7 @@ def _digest_html(deals: list[SelectedDeal]) -> str:
         f"<th style='{_HEADER_CELL_STYLE.format(align=align)}'>{name}</th>"
         for name, align in zip(_COLUMNS, _ALIGNMENTS, strict=True)
     )
-    rows = "".join(_digest_html_row(deal) for deal in deals)
+    rows = "".join(_digest_html_row(deal) for deal in _sort_for_digest(deals))
 
     savings = _total_savings(deals)
     savings_html = ""
@@ -139,6 +154,7 @@ def _digest_html_row(deal: SelectedDeal) -> str:
         f"{candidate.discount_pct}%",
         confidence,
         html.escape(likelihood),
+        html.escape(deal.reason),
     )
     cells = "".join(
         f"<td style='{_BODY_CELL_STYLE.format(align=align)}'>{value}</td>"

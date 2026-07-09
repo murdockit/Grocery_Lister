@@ -23,13 +23,24 @@ async def scheduler_main() -> None:
     scheduler = AsyncIOScheduler(timezone=timezone)
     scheduler.add_job(
         run_pipeline,
-        CronTrigger(day_of_week=settings.run_day, hour=settings.run_hour, minute=0, timezone=timezone),
+        CronTrigger(
+            day_of_week=settings.run_day,
+            hour=settings.run_hour,
+            minute=settings.run_minute,
+            timezone=timezone,
+        ),
         id="weekly-deal-watcher",
         replace_existing=True,
         max_instances=1,
     )
     scheduler.start()
-    logger.info("Weekly Deal Watcher scheduled for %s at %02d:00 %s", settings.run_day, settings.run_hour, settings.tz)
+    logger.info(
+        "Weekly Deal Watcher scheduled for %s at %02d:%02d %s",
+        settings.run_day,
+        settings.run_hour,
+        settings.run_minute,
+        settings.tz,
+    )
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
