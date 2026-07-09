@@ -2,8 +2,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import create_engine
-from sqlalchemy.engine import make_url
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import Base
@@ -34,7 +34,31 @@ def get_engine(database_url: str):
 
 
 def init_db(database_url: str) -> None:
-    Base.metadata.create_all(get_engine(database_url))
+    engine = get_engine(database_url)
+    Base.metadata.create_all(engine)
+    _add_missing_columns(engine)
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """create_all() only adds missing tables, not columns on ones that already
+    exist. Add any new nullable columns in place so existing databases (with
+    real purchase history) upgrade without needing a migration tool."""
+    if engine.dialect.name != "sqlite":
+        return
+
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue
+            existing_columns = {col["name"] for col in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing_columns:
+                    continue
+                column_type = column.type.compile(dialect=engine.dialect)
+                ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column_type}'
+                conn.execute(text(ddl))
 
 
 @contextmanager
