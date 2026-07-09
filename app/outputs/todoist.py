@@ -16,6 +16,19 @@ from app.outputs.base import OutputAdapter
 PROJECT_ID_KEY = "todoist_project_id"
 
 
+def _todoist_items(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        items = payload
+    elif isinstance(payload, dict) and isinstance(payload.get("results"), list):
+        items = payload["results"]
+    else:
+        raise RuntimeError(f"Unexpected Todoist response shape: {type(payload).__name__}")
+
+    if not all(isinstance(item, dict) for item in items):
+        raise RuntimeError("Unexpected Todoist response item shape")
+    return items
+
+
 class TodoistOutput(OutputAdapter):
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -39,7 +52,7 @@ class TodoistOutput(OutputAdapter):
         if cached and await self._project_exists(client, cached):
             return cached
 
-        projects = await self._request_json(client, "GET", "/projects")
+        projects = _todoist_items(await self._request_json(client, "GET", "/projects"))
         for project in projects:
             if project.get("name") == self.settings.todoist_project_name:
                 project_id = str(project["id"])
@@ -61,7 +74,9 @@ class TodoistOutput(OutputAdapter):
         return response.status_code == 200
 
     async def _clear_project(self, client: httpx.AsyncClient, project_id: str) -> None:
-        tasks = await self._request_json(client, "GET", "/tasks", params={"project_id": project_id})
+        tasks = _todoist_items(
+            await self._request_json(client, "GET", "/tasks", params={"project_id": project_id})
+        )
         for task in tasks:
             task_id = str(task["id"])
             response = await self._request(client, "DELETE", f"/tasks/{task_id}", tolerate_404=True)

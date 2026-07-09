@@ -5,6 +5,7 @@ A small self-hosted Python job that checks Kroger promo prices for watchlist ite
 ## Quick Start
 
 1. Copy `.env.example` to `.env` and fill in Kroger, Gemini, Todoist, and optional SMTP settings.
+	On Linux hosts, set `PUID` and `PGID` to the owner of the local `data` directory if your user is not `1000:1000`.
 2. Copy `watchlist.example.yaml` to `data/watchlist.yaml` and edit your watchlist.
 3. Find your Kroger location ID or IDs:
 
