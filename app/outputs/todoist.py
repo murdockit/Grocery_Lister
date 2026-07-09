@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 import httpx
@@ -10,10 +11,11 @@ from app.config import Settings
 from app.db import session_scope
 from app.deals import SelectedDeal
 from app.http import with_retries
-from app.models import AppState
+from app.models import AppState, utc_now
 from app.outputs.base import OutputAdapter
 
 PROJECT_ID_KEY = "todoist_project_id"
+COMPLETED_LOOKBACK_DAYS = 14
 
 
 def _todoist_items(payload: Any) -> list[dict[str, Any]]:
@@ -33,9 +35,9 @@ class TodoistOutput(OutputAdapter):
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    async def publish(self, deals: list[SelectedDeal]) -> None:
+    async def publish(self, deals: list[SelectedDeal]) -> dict[str, str]:
         if not self.settings.todoist_api_token:
-            return
+            return {}
         async with httpx.AsyncClient(
             base_url=self.settings.todoist_api_base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {self.settings.todoist_api_token}"},
@@ -43,8 +45,30 @@ class TodoistOutput(OutputAdapter):
         ) as client:
             project_id = await self._project_id(client)
             await self._clear_project(client, project_id)
+            task_ids: dict[str, str] = {}
             for deal in deals:
-                await self._create_task(client, project_id, deal.task_content)
+                task = await self._create_task(client, project_id, deal.task_content)
+                if task is not None:
+                    task_ids[deal.candidate.upc] = str(task["id"])
+            return task_ids
+
+    async def harvest_outcomes(self, task_ids: list[str]) -> dict[str, str]:
+        """Map each requested Todoist task id to 'purchased' or 'ignored'.
+
+        Call this before publish() clears the project for the new week's list.
+        """
+        if not task_ids or not self.settings.todoist_api_token:
+            return {}
+        async with httpx.AsyncClient(
+            base_url=self.settings.todoist_api_base_url.rstrip("/"),
+            headers={"Authorization": f"Bearer {self.settings.todoist_api_token}"},
+            timeout=self.settings.http_timeout_seconds,
+        ) as client:
+            completed_ids = await self._completed_task_ids(client)
+        return {
+            task_id: "purchased" if task_id in completed_ids else "ignored"
+            for task_id in task_ids
+        }
 
     async def _project_id(self, client: httpx.AsyncClient) -> str:
         with session_scope(self.settings.database_url) as session:
@@ -83,15 +107,42 @@ class TodoistOutput(OutputAdapter):
             if response.status_code == 405:
                 await self._request(client, "POST", f"/tasks/{task_id}/close", tolerate_404=True)
 
-    async def _create_task(self, client: httpx.AsyncClient, project_id: str, content: str) -> None:
-        await self._request_json(
+    async def _create_task(
+        self, client: httpx.AsyncClient, project_id: str, content: str
+    ) -> dict[str, Any] | None:
+        return await self._request_json(
             client,
             "POST",
             "/tasks",
             json={"project_id": project_id, "content": content},
         )
 
-    async def _request_json(self, client: httpx.AsyncClient, method: str, path: str, **kwargs: Any) -> Any:
+    async def _completed_task_ids(self, client: httpx.AsyncClient) -> set[str]:
+        since = utc_now() - timedelta(days=COMPLETED_LOOKBACK_DAYS)
+        until = utc_now()
+        ids: set[str] = set()
+        cursor: str | None = None
+        while True:
+            params: dict[str, str] = {
+                "since": since.isoformat(timespec="seconds"),
+                "until": until.isoformat(timespec="seconds"),
+            }
+            if cursor:
+                params["cursor"] = cursor
+            payload = await self._request_json(
+                client, "GET", "/tasks/completed/by_completion_date", params=params
+            )
+            if not isinstance(payload, dict):
+                break
+            ids.update(str(item["id"]) for item in payload.get("items", []))
+            cursor = payload.get("next_cursor")
+            if not cursor:
+                break
+        return ids
+
+    async def _request_json(
+        self, client: httpx.AsyncClient, method: str, path: str, **kwargs: Any
+    ) -> Any:
         response = await self._request(client, method, path, **kwargs)
         if response.status_code == 204:
             return None
