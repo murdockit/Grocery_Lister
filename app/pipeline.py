@@ -4,17 +4,21 @@ import argparse
 import asyncio
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db import init_db, session_scope
 from app.deals import CandidateDeal, SelectedDeal
+from app.distill import DistillationResult, run_distillation, should_run_distillation
+from app.habits import build_habit_summary, build_price_history
+from app.harvest import harvest
 from app.kroger import KrogerClient
-from app.llm import DealSelector
+from app.llm import DealSelector, PreferenceDistiller
 from app.models import Item, PriceHistory, Published, Run, utc_now
 from app.outputs.email import EmailOutput
 from app.outputs.todoist import TodoistOutput
+from app.preferences import active_learned_terms, sync_seed_preferences
 from app.watchlist import Watchlist, load_watchlist
 
 
@@ -25,16 +29,33 @@ async def run_pipeline(settings: Settings | None = None) -> list[SelectedDeal]:
     run_id = _start_run(settings)
 
     try:
-        candidates = await KrogerClient(settings).get_promo_deals(watchlist.search_terms)
-        selected = DealSelector(settings).select(candidates, watchlist)
+        await harvest(settings)
+
+        with session_scope(settings.database_url) as session:
+            sync_seed_preferences(session, watchlist)
+            learned_terms = active_learned_terms(session, watchlist)
+            search_terms = list(dict.fromkeys(watchlist.search_terms + learned_terms))
+
+        candidates = await KrogerClient(settings).get_promo_deals(search_terms)
+
+        with session_scope(settings.database_url) as session:
+            upcs = [candidate.upc for candidate in candidates]
+            habits = build_habit_summary(session, upcs)
+            history = build_price_history(session, upcs)
+
+        selected = DealSelector(settings).select(candidates, watchlist, habits, history)
 
         with session_scope(settings.database_url) as session:
             _record_prices(session, candidates)
 
-        await _publish(settings, selected)
+        task_ids = await _publish(settings, selected) or {}
 
         with session_scope(settings.database_url) as session:
-            _record_published(session, selected, settings.output_modes)
+            _record_published(session, selected, settings.output_modes, task_ids)
+
+        await _maybe_distill(settings, watchlist)
+
+        with session_scope(settings.database_url) as session:
             run = session.get(Run, run_id)
             if run is None:
                 raise RuntimeError(f"Run {run_id} disappeared before completion")
@@ -88,7 +109,12 @@ def _record_prices(session: Session, candidates: list[CandidateDeal]) -> None:
         )
 
 
-def _record_published(session: Session, selected: list[SelectedDeal], output_modes: list[str]) -> None:
+def _record_published(
+    session: Session,
+    selected: list[SelectedDeal],
+    output_modes: list[str],
+    task_ids: dict[str, str],
+) -> None:
     for deal in selected:
         item = session.scalar(select(Item).where(Item.upc == deal.candidate.upc))
         if item is None:
@@ -99,25 +125,44 @@ def _record_published(session: Session, selected: list[SelectedDeal], output_mod
                     item_id=item.id,
                     price=Decimal(deal.candidate.promo_price),
                     output_mode=mode,
+                    todoist_task_id=task_ids.get(deal.candidate.upc) if mode == "todoist" else None,
                 )
             )
 
 
-async def _publish(settings: Settings, selected: list[SelectedDeal]) -> None:
+async def _publish(settings: Settings, selected: list[SelectedDeal]) -> dict[str, str]:
+    task_ids: dict[str, str] = {}
     for mode in settings.output_modes:
         if mode == "todoist":
-            await TodoistOutput(settings).publish(selected)
+            task_ids = await TodoistOutput(settings).publish(selected)
         elif mode == "email":
             await EmailOutput(settings).publish(selected)
         elif mode in {"keep_api", "tasks"}:
             raise NotImplementedError(f"Output mode {mode!r} is planned for Phase 3")
         else:
             raise ValueError(f"Unknown OUTPUT_MODE value: {mode}")
+    return task_ids
+
+
+async def _maybe_distill(settings: Settings, watchlist: Watchlist) -> None:
+    result: DistillationResult | None = None
+    with session_scope(settings.database_url) as session:
+        success_count_query = select(func.count()).select_from(Run).where(Run.status == "success")
+        successful_runs = session.scalar(success_count_query) or 0
+        if should_run_distillation(successful_runs + 1):
+            result = run_distillation(session, watchlist)
+
+    if result is None or (not result.promoted and not result.demoted):
+        return
+    result = PreferenceDistiller(settings).annotate(result)
+    await EmailOutput(settings).send_learning_summary(result.promoted, result.demoted)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Weekly Deal Watcher pipeline.")
-    parser.add_argument("--now", action="store_true", help="Run immediately and print selected deals.")
+    parser.add_argument(
+        "--now", action="store_true", help="Run immediately and print selected deals."
+    )
     args = parser.parse_args()
     if not args.now:
         parser.error("Use --now for a one-shot run, or python -m app.main for the scheduler.")

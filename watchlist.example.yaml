@@ -6,5 +6,6 @@ items:
   - name: coffee
 categories:
   - fresh fruit
+blocklist: []          # never suggest these; also deactivates matching learned preferences
 max_list_size: 15
 min_discount_pct: 15

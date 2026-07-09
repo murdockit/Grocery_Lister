@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import Base
 
-
 _engine_cache = {}
 
 

@@ -14,6 +14,7 @@ class WatchItem(BaseModel):
 class Watchlist(BaseModel):
     items: list[WatchItem] = Field(default_factory=list)
     categories: list[str] = Field(default_factory=list)
+    blocklist: list[str] = Field(default_factory=list)
     max_list_size: int = Field(default=15, ge=1)
     min_discount_pct: int = Field(default=15, ge=0, le=100)
 
@@ -22,10 +23,24 @@ class Watchlist(BaseModel):
     def normalize_categories(cls, categories: list[str]) -> list[str]:
         return [category.strip() for category in categories if category.strip()]
 
+    @field_validator("blocklist")
+    @classmethod
+    def normalize_blocklist(cls, blocklist: list[str]) -> list[str]:
+        return [entry.strip() for entry in blocklist if entry.strip()]
+
+    @property
+    def blocked_set(self) -> set[str]:
+        return {entry.lower() for entry in self.blocklist}
+
+    def is_blocked(self, name: str) -> bool:
+        haystack = name.lower()
+        return any(blocked in haystack for blocked in self.blocked_set)
+
     @property
     def search_terms(self) -> list[str]:
         terms = [item.name for item in self.items] + self.categories
-        return list(dict.fromkeys(term.strip() for term in terms if term.strip()))
+        deduped = dict.fromkeys(term.strip() for term in terms if term.strip())
+        return [term for term in deduped if not self.is_blocked(term)]
 
 
 def load_watchlist(path: Path) -> Watchlist:
