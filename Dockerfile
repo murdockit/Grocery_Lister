@@ -13,6 +13,8 @@ COPY scripts ./scripts
 
 RUN pip install --no-cache-dir .
 
+RUN mkdir -p /data && chown app:app /data
+
 USER app
 
 CMD ["python", "-m", "app.main"]
