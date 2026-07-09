@@ -1,0 +1,46 @@
+{
+  "data": [
+    {
+      "upc": "0001111011111",
+      "description": "Kroger Chicken Thighs Family Pack",
+      "categories": ["Meat & Seafood"],
+      "items": [
+        {
+          "size": "1 lb",
+          "price": {
+            "regular": 2.79,
+            "promo": 1.99
+          }
+        }
+      ]
+    },
+    {
+      "upc": "0001111022222",
+      "description": "Kroger Greek Yogurt Plain",
+      "categories": ["Dairy"],
+      "items": [
+        {
+          "size": "32 oz",
+          "price": {
+            "regular": 5.49,
+            "promo": 4.99
+          }
+        }
+      ]
+    },
+    {
+      "upc": "0001111033333",
+      "description": "Private Selection Coffee Whole Bean",
+      "categories": ["Beverages"],
+      "items": [
+        {
+          "size": "12 oz",
+          "price": {
+            "regular": 10.99,
+            "promo": 7.99
+          }
+        }
+      ]
+    }
+  ]
+}

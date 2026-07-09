@@ -1,0 +1,10 @@
+items:
+  - name: chicken thighs
+    good_price: 2.00
+    unit: lb
+  - name: greek yogurt
+  - name: coffee
+categories:
+  - fresh fruit
+max_list_size: 15
+min_discount_pct: 15
