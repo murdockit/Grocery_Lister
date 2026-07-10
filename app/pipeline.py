@@ -21,6 +21,8 @@ from app.outputs.todoist import TodoistOutput
 from app.preferences import active_learned_terms, sync_seed_preferences
 from app.watchlist import Watchlist, load_watchlist
 
+FAILURE_ALERT_THRESHOLD = 2
+
 
 async def run_pipeline(settings: Settings | None = None) -> list[SelectedDeal]:
     settings = settings or get_settings()
@@ -64,7 +66,10 @@ async def run_pipeline(settings: Settings | None = None) -> list[SelectedDeal]:
         return selected
     except Exception as exc:
         _mark_run_failed(settings, run_id, exc)
-        if settings.smtp_host and settings.notify_email:
+        with session_scope(settings.database_url) as session:
+            consecutive_failures = _consecutive_failed_runs(session)
+        should_alert = consecutive_failures >= FAILURE_ALERT_THRESHOLD
+        if should_alert and settings.smtp_host and settings.notify_email:
             await EmailOutput(settings).send_failure(str(exc))
         raise
 
@@ -84,6 +89,18 @@ def _mark_run_failed(settings: Settings, run_id: int, exc: Exception) -> None:
             run.status = "failed"
             run.error = str(exc)
             run.finished_at = utc_now()
+
+
+def _consecutive_failed_runs(session: Session) -> int:
+    """Trailing run of status='failed', most recent first. Resets to 0 on any
+    success, so a single transient blip doesn't trigger an alert email."""
+    runs = session.scalars(select(Run).order_by(Run.started_at.desc()))
+    count = 0
+    for run in runs:
+        if run.status != "failed":
+            break
+        count += 1
+    return count
 
 
 def _record_prices(session: Session, candidates: list[CandidateDeal]) -> None:

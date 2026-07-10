@@ -28,10 +28,15 @@ class SelectedDeal:
     candidate: CandidateDeal
     matched_watchlist_item: str
     reason: str
+    confidence: float | None = None
+    likelihood: str | None = None
 
     @property
     def task_content(self) -> str:
-        regular = f"reg ${self.candidate.regular_price:.2f}" if self.candidate.regular_price else "reg n/a"
+        if self.candidate.regular_price:
+            regular = f"reg ${self.candidate.regular_price:.2f}"
+        else:
+            regular = "reg n/a"
         return (
             f"{self.candidate.description} - ${self.candidate.promo_price:.2f} "
             f"({regular}, {self.candidate.discount_pct}% off)"

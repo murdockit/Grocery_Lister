@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 
 from app.models import Decision, Item, PriceHistory
 
+LIKELY_PURCHASE_THRESHOLD = 3
+UNLIKELY_IGNORE_THRESHOLD = 6
+
 
 class HabitSummary(BaseModel):
     times_purchased: int = 0
@@ -47,6 +50,17 @@ def build_habit_summary(session: Session, upcs: list[str]) -> dict[str, HabitSum
             avg_promo_price_seen=(sum(promos) / len(promos)) if promos else None,
         )
     return summary
+
+
+def compute_likelihood(habit: HabitSummary | None) -> str | None:
+    """'likely' if bought before, 'unlikely' if repeatedly skipped, else blank."""
+    if habit is None:
+        return None
+    if habit.times_purchased >= LIKELY_PURCHASE_THRESHOLD:
+        return "likely"
+    if habit.times_ignored >= UNLIKELY_IGNORE_THRESHOLD:
+        return "unlikely"
+    return None
 
 
 def build_price_history(session: Session, upcs: list[str]) -> dict[str, list[Decimal]]:

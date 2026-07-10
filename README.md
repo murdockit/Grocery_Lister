@@ -35,6 +35,9 @@ docker compose exec app python -m app.pipeline --now
 - Todoist defaults to `https://api.todoist.com/api/v1`. If Todoist changes endpoint versions again, set `TODOIST_API_BASE_URL` in `.env`; 410 responses are surfaced with that hint. Completed-task lookups use the unified API's `tasks/completed/by_completion_date` endpoint, since the plain `tasks` endpoint only returns active tasks.
 - Gemini defaults to `gemini-3.5-flash`, the current stable Flash model listed in Google AI Studio docs on 2026-07-08.
 - Set `MOCK_KROGER=1` for a local fixture-backed run without Kroger API calls.
+- The weekly email is an HTML table (Item | Regular | Promo | Savings % | Confidence | Likelihood | Why), with a plain-text fallback for clients that don't render HTML. Confidence (0-100) comes from Gemini when it's used; Likelihood is "likely" once you've bought an item 3+ times, "unlikely" after 6+ ignored appearances, and blank otherwise. Rows are sorted with likely/high-confidence deals first (this doesn't affect Todoist task order).
+- `RUN_DAY` accepts comma-separated days (e.g. `wed,fri`); `RUN_HOUR`/`RUN_MINUTE` set the time. Defaults to Wed+Fri at 00:30 to catch both the weekly ad refresh and any 3-day weekend specials.
+- A run-failure alert email only fires once 2 runs in a row fail, so a single transient blip (a Kroger timeout, say) doesn't page you - the streak resets on the next success.
 
 ## The learning loop
 

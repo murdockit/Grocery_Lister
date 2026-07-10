@@ -2,6 +2,7 @@ import math
 from decimal import Decimal
 
 from app.deals import CandidateDeal, SelectedDeal
+from app.habits import HabitSummary, compute_likelihood
 from app.watchlist import Watchlist
 
 GOOD_PRICE_PERCENTILE = 25
@@ -36,8 +37,10 @@ def fallback_select(
     candidates: list[CandidateDeal],
     watchlist: Watchlist,
     history: dict[str, list[Decimal]] | None = None,
+    habits: dict[str, HabitSummary] | None = None,
 ) -> list[SelectedDeal]:
     history = history or {}
+    habits = habits or {}
     selected: list[SelectedDeal] = []
     watch_terms = [item.name.lower() for item in watchlist.items]
     category_terms = [category.lower() for category in watchlist.categories]
@@ -69,8 +72,14 @@ def fallback_select(
         if historically_good:
             reason += f" At/below the {GOOD_PRICE_PERCENTILE}th percentile of its promo history."
 
+        likelihood = compute_likelihood(habits.get(candidate.upc))
         selected.append(
-            SelectedDeal(candidate=candidate, matched_watchlist_item=matched, reason=reason)
+            SelectedDeal(
+                candidate=candidate,
+                matched_watchlist_item=matched,
+                reason=reason,
+                likelihood=likelihood,
+            )
         )
 
     def sort_key(deal: SelectedDeal) -> tuple[int, Decimal]:
