@@ -38,6 +38,7 @@ docker compose exec app python -m app.pipeline --now
 - The weekly email is an HTML table (Item | Regular | Promo | Savings % | Confidence | Likelihood | Why), with a plain-text fallback for clients that don't render HTML. Confidence (0-100) comes from Gemini when it's used; Likelihood is "likely" once you've bought an item 3+ times, "unlikely" after 6+ ignored appearances, and blank otherwise. Rows are sorted with likely/high-confidence deals first (this doesn't affect Todoist task order).
 - `RUN_DAY` accepts comma-separated days (e.g. `wed,fri`); `RUN_HOUR`/`RUN_MINUTE` set the time. Defaults to Wed+Fri at 00:30 to catch both the weekly ad refresh and any 3-day weekend specials.
 - A run-failure alert email only fires once 2 runs in a row fail, so a single transient blip (a Kroger timeout, say) doesn't page you - the streak resets on the next success.
+- The scheduled job tolerates up to an hour of delay before considering a fire time "missed" (APScheduler's own default is a strict 1 second, which is easy to blow past under normal container/host jitter and would otherwise silently skip that week's run with only a log warning).
 
 ## The learning loop
 
